@@ -4,6 +4,7 @@ title:  "Studying AMQP protocol"
 date:   2016-09-07 18:08:00 -0300
 lang: en
 ref: rabbitmq
+comments: true
 categories: rabbitmq amqp
 description: Basics about AMQP protocol and RabbitMQ with Java
 ---

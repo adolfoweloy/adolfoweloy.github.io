@@ -4,6 +4,7 @@ title:  "Estudando o protocolo AMQP"
 date:   2016-09-07 18:08:00 -0300
 lang: pt
 ref: rabbitmq
+comments: true
 categories: rabbitmq amqp
 description: Básico sobre o protocolo AMQP e RabbitMQ com Java
 ---

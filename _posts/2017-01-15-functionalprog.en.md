@@ -4,6 +4,7 @@ title:  "Thinking about functional programming"
 date:   2017-01-15 12:44:00 -0300
 lang: en
 ref: functional_java
+comments: true
 categories: functional java
 description: some thoughts on functional programming with Java8
 ---
