@@ -1,0 +1,8 @@
+rabbitmq:
+  default_lang: en
+
+functional_java:
+  default_lang: en
+
+livro_casa_do_codigo:
+  default_lang: pt
