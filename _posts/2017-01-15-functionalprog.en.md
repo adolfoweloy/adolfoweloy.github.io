@@ -23,9 +23,9 @@ But does functional programming excludes OOP? That's the point! It is possible t
 
 # What is functional programming?
 
-Although this question was also answered by many people, I wrote here what I thing about functional programming to contextualize the subject here! Furthermore I think it's hard to find direct and simple explanation.
+Although this question was also answered by many people, I wrote here what I think about functional programming to contextualize the subject here! Furthermore I think it's hard to find direct and simple explanation.
 
-Function programming tries to bring the bases of math functions to software development. So functions are the basic element for functional programming as objects are the basic element for object oriented programming. As well as in math, functions must return the same output given the same input were provided. Through simple functions we can combine them to solve complex problems.
+Functional programming tries to bring the bases of math functions to software development. So functions are the basic element for functional programming as objects are the basic element for object oriented programming. As well as in math, functions must return the same output given the same input were provided. Through simple functions we can combine them to solve complex problems.
 
 Languages as Java uses methods to represent functions, but the difference is that methods execute within the object context which they belong to. Functions are independent units which does not need to execute within the object context. Theoretically every object oriented languages provides the object by itself as a method parameter either implicitly or explicitly. That's the way we can reference to the object through `this` in Java. Python do it explicitly by requiring the programmer to declare methods with the first parameter to be `self` which is a reference for the object that current method belongs to. As an example of `self` usage take a look to the forwarding code:
 
@@ -83,7 +83,7 @@ private LazySeq<Integer> naturals(int from) {
 }
 ```
 
-The expression `() -> naturals(from + 1)` wont be performed when someone call the `naturals` method. Such a **function** will be performed only when it is required to and is allowed to. If functions are defined to work in a lazy way with infinite data structures, we can use such a construction as follows (this examplo take the double of the first 10 natural numbers):
+The expression `() -> naturals(from + 1)` wont be performed when someone call the `naturals` method. Such a **function** will be performed only when it is required to and is allowed to. If functions are defined to work in a lazy way with infinite data structures, we can use such a construction as follows (this example take the double of the first 10 natural numbers):
 
 ```java
 LazySeq<Integer> first10Doubles = naturals(2).map(n -> n * 2).take(10);
@@ -98,7 +98,7 @@ A nice articl to read about it and uses Java as the main language for examples c
  
 # Data structures using functional programming
 
-It's interesting to think that functional programming is not just about functions and immutable objects. The question is that we also need to think about data structures that are immutable and are supported by functional programming. Before creating our first data structure lets search for some definitions about data types. When thinking about functional programming we can thinkg about concrete data types, algebraic data types and abstract data types. I think it's important to know such definitions because having enough vocabulary about what we are learning helps to better communicate and better depicts any concept.
+It's interesting to think that functional programming is not just about functions and immutable objects. The question is that we also need to think about data structures that are immutable and are supported by functional programming. Before creating our first data structure lets search for some definitions about data types. When thinking about functional programming we can think about concrete data types, algebraic data types and abstract data types. I think it's important to know such definitions because having enough vocabulary about what we are learning helps to better communicate and better depicts any concept.
 
 ## Concrete data types
 They are the most basic data types used to compose more complex data types such as algebraic and abstract data types.
@@ -112,7 +112,7 @@ An example of algebraic data type in Java, can be given as follows:
 Optional<String> name;
 ```
 
-With `Optional` we can work with a well defined data type which can might contain some value or not. When working directly with `String` in Java, the programmer ends to be aware that a variable can have a content or can be null. The problem with `null` is that it isn't a `String`. It's like there is another type defining the same variable or attribute. **Attention here:** I 'm not saying to start using `Optional` everywhere because I really think it's not good for some cases. I particularlly use it for methods which really might not have what to return as an output. As a good example to use `Optional` I like to show a find method as `Optional<User> findByName(String name);`.
+With `Optional` we can work with a well defined data type which might contain some value or not. When working directly with `String` in Java, the programmer ends to be aware that a variable can have a content or can be null. The problem with `null` is that it isn't a `String`. It's like there is another type defining the same variable or attribute. **Attention here:** I 'm not saying to start using `Optional` everywhere because I really think it's not good for some cases. I particularlly use it for methods which really might not have what to return as an output. As a good example to use `Optional` I like to show a find method as `Optional<User> findByName(String name);`.
 
 Lists are also algebraic data types that can be composed by another data types well defined.
 
