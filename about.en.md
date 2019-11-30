@@ -6,9 +6,9 @@ ref: about
 permalink: /about.en/
 ---
 
-I am a software engineer who likes to share tech related subjects throught blog posts, magazines and books. I have beend writing software over 10 years with experience with some different languages such as Java, Ruby, Python (basic knowledge yet), JavaScript, PHP5 and C language. I have also played with basic on early days and Visual Basic... but that was soooo long time ago.
+I am a software engineer who likes to share tech related subjects throught blog posts, magazines and books. I have beend writing software over 10 years with experience with some different languages such as Java, Ruby, Python (basic knowledge yet), JavaScript, PHP5 and C language. I have also played with Basic on early days and Visual Basic... but that was soooo long time ago.
 
-I am interested in Object Oriented Programming and Functional Programming, software engineering, Extreme Programming, Algorithms, Operational Systems... (computer science as a whole) and sometimes I spent my time making some draws, oil paintings, and sometimes I am surfing here in Brazil...
+I am interested in Object Oriented Programming and Functional Programming, Software Engineering, Extreme Programming, Algorithms, Operational Systems (honestly computer science in general). Sometimes I spend my time drawing, painting or surfing in ~~Brazil~~ Australia.
 
 I am also the author of the following books
 - **OAuth 2.0: Proteja suas aplicações com o Spring Security OAuth2** (book in Portuguese), available at [Casa do Código](https://www.casadocodigo.com.br/products/livro-oauth).

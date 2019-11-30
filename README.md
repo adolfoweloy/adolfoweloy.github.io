@@ -22,6 +22,12 @@ jekyll clean
 jekyll build
 ```
 
+## Serving drafts locally
+
+```
+bundle exec jekyll serve --watch --drafts
+```
+
 ## Start the server locally
 
 To star the server just run
