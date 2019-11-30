@@ -21,7 +21,9 @@
 
         <div class="trigger">
 
+          <!-- obtaining posts sorted by lang -->
           {% assign posts=site.posts | where:"ref", page.ref | sort: 'lang' %}
+
           {% for post in posts %}
             {% if post.lang == page.lang %}
               <a style="font-weight: bold" class="page-link" 
