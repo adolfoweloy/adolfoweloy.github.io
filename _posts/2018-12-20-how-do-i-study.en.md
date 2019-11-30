@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Searching for a studying method"
-date:   2018-12-20 21:12:00 +10
+date:   2018-12-20 21:12:00 +1000
 lang: en
 ref: productivity
 comments: true

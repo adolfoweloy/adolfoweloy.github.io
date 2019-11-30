@@ -1,3 +1,9 @@
+dynamodb_tips:
+  default_lang: en
+
+productivity:
+  default_lang: en
+
 rabbitmq:
   default_lang: en
 

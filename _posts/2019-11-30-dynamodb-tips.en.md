@@ -1,3 +1,14 @@
+---
+layout: post
+title:  "DynamoDB Tips"
+date:   2019-11-29 19:35:00 +1000
+lang: en
+ref: dynamodb_tips
+comments: true
+categories: dynamodb throughput
+description: Some of my notes about DynamoDB limits and throughput and what are the options available to effectively dimension DynamoDB tables.
+---
+
 This post is a small collection of things that are important to bear in mind when working with DynamoDB, and the list below describes what is covered here:
 
 1. Limits
