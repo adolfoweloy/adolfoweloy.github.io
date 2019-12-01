@@ -17,6 +17,7 @@ ref: home
     {% if post.lang == site.data.posts[post.ref].default_lang %}
       <li>
         <a href="{{ post.url }}">{{ post.title }}</a>
+        <p>{{ post.excerpt }}</p>
       </li>
     {% endif %}
   {% endfor %}
