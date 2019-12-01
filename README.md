@@ -8,8 +8,8 @@ To work at development mode just export the following env variable followed by s
 
 ```
 export JEKYLL_ENV=development
-jekyll clean
-jekyll build
+bundle exec jekyll clean
+bundle exec jekyll build
 ```
 
 ## Publishing to production
@@ -18,8 +18,8 @@ Before publishing to github pages, make sure to build the blog properly with the
 
 ```
 export JEKYLL_ENV=production
-jekyll clean
-jekyll build
+bundle exec jekyll clean
+bundle exec jekyll build
 ```
 
 ## Serving drafts locally
@@ -33,7 +33,13 @@ bundle exec jekyll serve --watch --drafts
 To star the server just run
 
 ```
-jekyll serve
+bundle exec jekyll serve
 ```
 
 and go to [http://localhost:4000/](http://localhost:4000/)
+
+## Important links to consider when changing the defaults
+
+- [Liquid](https://shopify.github.io/liquid/filters/split/), the templating language used by Jekyll;
+- [Jekyll cheatsheet](https://devhints.io/jekyll)
+- [Front Matter](https://jekyllrb.com/docs/front-matter/), content that when added as the header into posts, pages, etc makes the file to be a special file for Jekyll (Jekyll will process the front matter content).
