@@ -15,8 +15,7 @@
 # in the templates via {{ site.myvariable }}.
 title: Adolfo Eloy
 description: >- # this means to ignore newlines until "baseurl:"
-  An extended software developer's memories, made available for everyone.
-  Through this blog, I share some thoughts about software development, productivity and some books to read
+  This blog is just my excuse to write a bit about programming and maybe some other things I like
   
 baseurl: "" # the subpath of your site, e.g. /blog
 url: "" # the base hostname & protocol for your site, e.g. http://example.com
