@@ -2,6 +2,11 @@
 
 This project is the source code for my personal blog generation. So, everything written here is aimed to help myself to keep using Jekyll even after long perioeds :)
 
+## Local setup
+
+Jekyll [uses Ruby version 2.7.0 or higher](https://jekyllrb.com/docs/).
+This repository uses `rbenv` in order to use the latest Ruby version.
+
 ## Develop mode
 
 To work at development mode just export the following env variable followed by some jekyll commands to rebuild local version of the blog:
