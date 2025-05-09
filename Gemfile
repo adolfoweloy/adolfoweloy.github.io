@@ -31,4 +31,4 @@ platforms :mingw, :x64_mingw, :mswin, :jruby do
 end
 
 
-gem "webrick", "~> 1.7"
+gem "webrick", "~> 1.8"
