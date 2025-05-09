@@ -39,7 +39,7 @@ bundle exec jekyll serve --watch --drafts
 
 ## Start the server locally
 
-To star the server just run
+To start the server just run
 
 ```
 bundle exec jekyll serve
