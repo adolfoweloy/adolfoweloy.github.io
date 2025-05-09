@@ -5,7 +5,11 @@ This project is the source code for my personal blog generation. So, everything 
 ## Local setup
 
 Jekyll [uses Ruby version 2.7.0 or higher](https://jekyllrb.com/docs/).
-This repository uses `rbenv` in order to use the latest Ruby version.
+This repository sets the Ruby version to be managed by `rbenv`. The version is set within `.ruby-version`.
+
+## Writing new posts
+
+Regardless if my posts are created as actual posts or drafts, I rely on the `ref` attribute set in the frontmatter in order to determine the default language for that post. If `ref` is not defined, the post won't show up in the posts list. This is actually an issue and should be fixed by simply providing a default language whenever ref is not present.
 
 ## Develop mode
 
