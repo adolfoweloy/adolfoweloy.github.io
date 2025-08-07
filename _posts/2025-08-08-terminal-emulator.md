@@ -91,7 +91,9 @@ The name terminal emulator may sound odd, but it comes from early days —before
 The shell is just one type of process you can run in a terminal, with popular examples including bash, zsh, and sh. But terminal emulators aren’t limited to shells—they can host any interactive program, such as ssh, tmux, or language REPLs like python or irb. These programs receive user input from the terminal emulator, process it, and send output back—often formatted using ANSI escape sequences to control text color, style, cursor positioning, and more.
 
 #### The kernel
-This is where the Linux kernel comes into play—handling all the low-level details that allow terminal emulators to communicate with processes like bash, ssh, tmux, and others. At a high level, this interaction is managed by the TTY subsystem using the PTY (pseudo-terminal) abstraction, which bridges the gap between the terminal emulator (on the master side) and the process (on the slave side). It’s a complex and fascinating part of the system, and we’ll explore it in more detail later on.
+This is where the Linux kernel comes into play—handling all the low-level details that allow terminal emulators to communicate with processes like bash, ssh, tmux, and others. At a high level, this interaction is managed by the TTY subsystem using the PTY (pseudo-terminal) abstraction, which bridges the gap between the terminal emulator (on the primary side) and the process (on the secondary side). It’s a complex and fascinating part of the system, and we’ll explore it in more detail later on.
+
+PS: I am using the words primary and secondary to refer to the PTY sides which is also consistent with what I read in the [Terminal anatomy](https://poor.dev/blog/terminal-anatomy/) blog post. However, some sources refer to them as master and slave respectively, which I find a bit outdated.
 
 ## Creating the terminal emulator
 
@@ -149,14 +151,14 @@ Then run it with `./mini_terminal`. You should see a window like the one below:
 
 At this point this terminal emulator window has just one functionality: it can be closed. Not exactly a terminal emulator yet, but now I can start connecting the dots with the Kernel and the shell.
 
-The next step involves having the terminal emulator to read from and write characters to the shell. To achieve this, I will use the `pty` library that is available on Linux. The PTY (pseudoterminal) is an abstraction representing a bridge between the terminal emulator and the shell. These two programs communicates through a _bi-directional asynchronous communication channel provided by the PTY_[^2]. The terminal emulator writes to the PTY master side, while the shell reads from the PTY slave side. This allows the terminal emulator to send commands to the shell and receive output back. Letś take another step improving the mental model with more details.
+The next step involves having the terminal emulator to read from and write characters to the shell. To achieve this, I will use the `pty` library that is available on Linux. The PTY (pseudoterminal) is an abstraction representing a bridge between the terminal emulator and the shell. These two programs communicates through a _bi-directional asynchronous communication channel provided by the PTY_[^2]. The terminal emulator writes to the PTY primary side, while the shell reads from the PTY secondary side. This allows the terminal emulator to send commands to the shell and receive output back. Letś take another step improving the mental model with more details.
 
 ![Terminal architecture with PTY]({{ "/assets/terminals_distilled/terminal-architecture-with-pty.png" | absolute_url }})
 
-In more concrete terms, the PTY is a pair of virtual devices: the master and the slave. The master side is what the terminal emulator interacts with, while the slave side is what the shell interacts with. The PTY master side is represented by `/dev/ptmx`, which is a multiplexer file that allows multiple terminal emulators to connect to the same PTY. The slave side is represented by `/dev/pts/N`, where `N` is a number assigned to each PTY slave. All of this will make more sense as we dive deeper into some more code (this runs before the terminal emulator starts listening for SDL events).
+In more concrete terms, the PTY is a pair of virtual devices: the primary and the secondary. The primary side is what the terminal emulator interacts with, while the secondary side is what the shell interacts with. The PTY primary side is represented by `/dev/ptmx`, which is a multiplexer file that allows multiple terminal emulators to connect to the same PTY. The secondary side is represented by `/dev/pts/N`, where `N` is a number assigned to each PTY secondary. All of this will make more sense as we dive deeper into some more code (this runs before the terminal emulator starts listening for SDL events).
 
 ```c
-pid = forkpty(&master_fd, NULL, &term, &win);
+pid = forkpty(&primary_fd, NULL, &term, &win);
 if (pid == -1) {
     perror("Error creating pseudo-terminal");
     return 1;
@@ -178,7 +180,7 @@ if (pid == 0) {
 }
 ```
 
-The core idea behind the creation of the PTY is to use the `forkpty` function, which creates a pseudo-terminal and forks a child process. This function opens the `/dev/pts/ptmx` file, which is the master side of the PTY, and returns a file descriptor that can be used to read and write to the PTY. On the other hand, the child process stdin and stdout are directly connected to the PTY slave side, which is represented by `/dev/pts/N`.
+The core idea behind the creation of the PTY is to use the `forkpty` function, which creates a pseudo-terminal and forks a child process. This function opens the `/dev/pts/ptmx` file, which is the primary side of the PTY, and returns a file descriptor that can be used to read and write to the PTY. On the other hand, the child process stdin and stdout are directly connected to the PTY secondary side, which is represented by `/dev/pts/N`.
 
 | Path              | Description                                                                 |
 |-------------------|-----------------------------------------------------------------------------|
@@ -195,7 +197,7 @@ As an experiment, if you type tty on the terminal, you will get the correspondin
 
 ## Rendering characters read from the PTY
 
-The missing part to have a minimal working terminal emulator is to handle the communication between the terminal emulator and the shell, as well as rendering the characters on the screen. The code below shows how to read from the PTY master side and render the characters on the SDL window. The first thing to do is to create a buffer to hold the characters read from the PTY master side, i.e. `/dev/pts/ptmx` and append that to the lines buffer global variable (something done by `append_line_to_lines_buffer()` function). 
+The missing part to have a minimal working terminal emulator is to handle the communication between the terminal emulator and the shell, as well as rendering the characters on the screen. The code below shows how to read from the PTY primary side and render the characters on the SDL window. The first thing to do is to create a buffer to hold the characters read from the PTY primary side, i.e. `/dev/pts/ptmx` and append that to the lines buffer global variable (something done by `append_line_to_lines_buffer()` function). 
 
 ```c
 int running = 1;
@@ -203,14 +205,14 @@ SDL_Event event;
 char buf[256];
 
 while (running) {
-    // reading the shell output from the master file descriptor
+    // reading the shell output from the primary file descriptor
     fd_set fds;
     FD_ZERO(&fds);
-    FD_SET(master_fd, &fds);
+    FD_SET(primary_fd, &fds);
     struct timeval tv = {0, 10000}; // 10ms
 
-    if (select(master_fd + 1, &fds, NULL, NULL, &tv) > 0) {
-        ssize_t n = read(master_fd, buf, sizeof(buf) - 1);
+    if (select(primary_fd + 1, &fds, NULL, NULL, &tv) > 0) {
+        ssize_t n = read(primary_fd, buf, sizeof(buf) - 1);
         if (n > 0) {
             buf[n] = '\0';
             append_line_to_lines_buffer(buf);
@@ -257,22 +259,22 @@ Now, running this code should give back something that looks more like a termina
 
 ## Handling user input
 
-To handle user input, the terminal emulator needs to read characters typed by the user and write them to the PTY master side. This is done by capturing keyboard events from SDL and writing the characters to the PTY master file descriptor. The code below shows how to handle keyboard events and write the characters to the PTY (this is just an improvement in the loop that was previously created to handle SDL events):
+To handle user input, the terminal emulator needs to read characters typed by the user and write them to the PTY primary side. This is done by capturing keyboard events from SDL and writing the characters to the PTY primary file descriptor. The code below shows how to handle keyboard events and write the characters to the PTY (this is just an improvement in the loop that was previously created to handle SDL events):
 
 ```c
 while (SDL_PollEvent(&event)) {
     if (event.type == SDL_QUIT) {
         running = 0;
     } else if (event.type == SDL_TEXTINPUT) {
-        write(master_fd, event.text.text, strlen(event.text.text));
+        write(primary_fd, event.text.text, strlen(event.text.text));
     } else if (event.type == SDL_KEYDOWN) {
         if ((event.key.keysym.mod & KMOD_CTRL) 
           && event.key.keysym.sym == SDLK_c) {
             running = 0;
         } else if (event.key.keysym.sym == SDLK_RETURN) {
-            write(master_fd, "\n", 1);
+            write(primary_fd, "\n", 1);
         } else if (event.key.keysym.sym == SDLK_BACKSPACE) {
-            write(master_fd, "\x7f", 1);
+            write(primary_fd, "\x7f", 1);
         }
     }
 }
@@ -329,7 +331,7 @@ The main components of the TTY subsystem that I had the chance to explore in the
 
 The workflow of the TTY subsystem can be summarized as follows:
 
-The PTY master, typically accessed by the terminal emulator via `/dev/ptmx`, receives data written by the emulator. This data is handled by the TTY subsystem in the kernel, where the TTY driver manages the low-level I/O logic and interacts with the **line discipline**, which processes the data (e.g., echoing, buffering, signal generation). On the other end, the PTY slave (e.g., /`dev/pts/N`) is connected to a process like bash, which communicates through standard input and output. The kernel links both ends, making the shell believe it's connected to a real physical terminal.
+The PTY primary, typically accessed by the terminal emulator via `/dev/ptmx`, receives data written by the emulator. This data is handled by the TTY subsystem in the kernel, where the TTY driver manages the low-level I/O logic and interacts with the **line discipline**, which processes the data (e.g., echoing, buffering, signal generation). On the other end, the PTY secondary (e.g., /`dev/pts/N`) is connected to a process like bash, which communicates through standard input and output. The kernel links both ends, making the shell believe it's connected to a real physical terminal.
 
 ## Next steps
 
