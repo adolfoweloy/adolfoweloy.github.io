@@ -9,35 +9,35 @@ categories: rabbitmq amqp
 description: Basics about AMQP protocol and RabbitMQ with Java
 ---
 
-AMQP protocol (Advanced Message Queue Protocol) is an asynchronous message exchange specification which allows for interoperability between different platforms. That is one of the main features provided by AMQP. Besides the possibilities to achieve the same with JMS (another specification that provides asynchronous message exchange), JMS rely with proprietary solutions with some drawbacks depending on regarded context. This post's goal is to provide summary content around what I had studied about AMQP. If you want to see more detailed comparision between AMQP and JMS it worths reading [Understanding the Diferences between AMQP and JMS](http://www.wmrichards.com/amqp.pdf) by Mark Richards.
+AMQP protocol (Advanced Message Queue Protocol) is an asynchronous message exchange specification which allows for interoperability between different platforms. That is one of the main features provided by AMQP. Besides the possibilities to achieve the same with JMS (another specification that provides asynchronous message exchange), JMS rely on proprietary solutions with some drawbacks depending on the context. This post's goal is to provide summary content around what I had studied about AMQP, so I won't dive into explaining the differences between JMS and AMQP here. There was a really nice article written by Mark Richards in the past, but the link to that article is currently broken at the time of writing the update to this post (2025).
 
 ## General AMQP's architecture
-Before start using any AMQP broker, I figured out to understand the main components from AMQP model and how they interact with each other. The three main components are:
+Before start using any AMQP broker, it is worth understanding the main components from AMQP model and how they interact with each other. The three main components are:
   - **Exchange**: this component receives messages and routes them to proper message queues.
 
   - **Message queue**: responsible for keeping messages and to forward them to binded consumers.
 
   - **Binding**: binds exchanges with message queues defining routing rules.
 
-Besides to know AMQP's main components it's important to know the entities involved in exchanging messages with an AMQP server.
+Besides the main components, it's also important to know the entities involved in the process of message exchange in an AMQP server:
 
-  - **Publisher**: is the entity responsible for sending messages to queue's server (broker). A publisher usually present messages to an Exchange which in turn decides the message queue to forward.
+  - **Publisher**: the entity responsible for sending messages to the broker. In AMQP terms, the publisher usually sends messages to an Exchange which in turn decides which message queue to forward them. A service or application here is a good example of a publisher.
 
-  - **Consumer**: consumes from message queues (likely to perform some processing based on message's content).
+  - **Consumer**: consumes from message queues (likely to perform some processing based on message's content), e.g. another decoupled service that processes messages from the queue.
 
-  - **Broker**: is the queues server which implements the AMQP specification.
+  - **Broker**: is the queues server which implements the AMQP specification, e.g. RabbitMQ.
 
 The figure that follows shows tha basic components addressed so far and how they relate to each other:
 
 ![AMQP's architecture]({{ "/assets/amqp.png" | absolute_url }})
 
-And now lets take a look for more detail on each component:
+And now lets take a dive in more details on each component:
 
 ### Message Queues
 
-Message queues have some properties that when combined together can be used to build conventional entities from middlewares. Some properties that worth studying are:
+Message queues have some properties that when combined together can be used to build conventional entities from middlewares. Some properties that are worth studying are:
 
-  - **private or shared**: this property defines if it's a private message queue with just one consumer allowed to listen for messages or if it's a shared queue where more than one consumer are allowed to listen for messages. Queues declared as **exclusive** are considered private queues.
+  - **private or shared**: this property defines if it's a private message queue with just one consumer allowed to listen for messages or if it's a shared queue where more than one consumer is allowed to listen for messages. Queues declared as **exclusive** are considered private queues.
   
   - **durable or temporary**: defines if a queue will be destroyed or not when rebooting the server.
   
@@ -59,16 +59,15 @@ When combining such properties, one can create some entities already known and u
   - There are **direct** and **topic** kinds of exchanges.
 
 ### Routing Key
-  - Is virtual address which allows for the Exchange to decides how to route any message. É um endereço virtual que permite à Exchange decidir como rotear uma mensagem. It's an available field in the header of an AMQP message.
-  
-  - It is easy to make a resemblance with a mail server where the routing key is the email address, the queue is the inbox and the exchange is such as an MTA (mail transfer agent) which knows how to route the message based on mail address.
+  - Is a virtual address that allows for the Exchange to decide how to route any message (a field in the header of an AMQP message).
+  - It is easy to make an analogy with a mail server where the routing key is the email address, the queue is the inbox and the exchange is a MTA (mail transfer agent) which knows how to route the message based on mail address.
 
 ### Binding
-  - Defines the relation between exchangeas and queues which can be achieved in different ways. It must be declared with a name or pattern which can be used during routings performed by exchanges. Before routing to an specific queue, the routing-key header's field is compared with the name defined in binding rule. Such comparisions can be direct or can also be through pattern matching (i.e. `rabbit.*`). Using such pattern, messages which come with routing keys `rabbit.fast` or `rabbit.slow` or `rabbit.anything`, will be redirected to the queue defined on binding rule `rabbit.*`. An `*` matches with a word and `#` matches with zero on more words.  
+  - Defines the relationship between exchanges and queues which can be achieved in different ways. It must be declared with a name or pattern which can be used during routings performed by exchanges. Before routing to an specific queue, the routing-key header's field is compared with the name defined in binding rule. Such comparisons can be direct or can also be through pattern matching (i.e. `rabbit.*`). Using such pattern, messages which come with routing keys `rabbit.fast` or `rabbit.slow` or `rabbit.anything`, will be redirected to the queue defined on binding rule `rabbit.*`. A `*` matches with a word and `#` matches with zero or more words.  
 
-#### Queues declarations examples
-##### Creating a shared queue
-A shared queue can be created using the default exchange just by not declaring it's exchange name. Some pseudo-code follows to clarify the example:
+### Queue declaration examples
+#### Creating a shared queue
+A shared queue can be created using the default exchange just by not declaring it's exchange name. Below are some pseudo-code snippets to clarify the example:
 
 Declaring a queue with `app.atticus` name:
 
@@ -91,8 +90,8 @@ Basic.Publish
     routing-key=app.atticus
 ```
 
-##### Creating a reply queue
-A reply queue usually is declared as temporary and and private so its name is declared by the broker. Its name is returned in Ok responses to the client.
+#### Creating a reply queue
+A reply queue is usually declared as temporary and private so its name is declared by the broker. Its name is returned in `Ok` responses to the client.
 
 Example of reply queue declaration:
 
@@ -114,10 +113,10 @@ Basic.Publish
     routing-key=tmp.star
 ```
 
-##### Declaring an pub-sub queue
-Allows that messages with routing-keys that matches with binding defined rules can be delivered to a specified queue. The AMQP protocol does not define a *subscription* entity.
+#### Declaring a pub-sub queue
+Allows for messages with routing-keys with a matching binding to be delivered to a specified queue. The AMQP protocol does not define a *subscription* entity.
 
-The following pseudocodes presents how to do it: 
+The following snippets present how to do it: 
 
 ```
 Queue.Declare
@@ -147,12 +146,12 @@ Basic.Publish
     routing-key=DAS.IST.EIN.VOGEL
 ```
 
-Looking to the presented pseudocodes, one can see that the examples are using statements which looks like Class methods (such as used by object oriented programming languages). Such structure does not follow this model by chance.
-The AMQP spec defines such a statements architecture which is based in structure presented in examples before. The idea was to facilitate the protocol design once the Middlewares by itself are too much complicated.
+Looking to the snippets above, one can see that the examples are using statements which looks like Class methods (such as used by object oriented programming languages). Such structure does not follow this model by chance.
+The AMQP spec defines such statements which in a similar way aiming to abstract and ease the protocol design given that Middleware implementation is often too complicated.
 
-The most interesting point here is that if you study the Rabbitmq's API (which is an AMQP implementation broker), you should note that the sintax defined by the API's methods are similar with low level statements defined by the protocol.
+The most interesting point here is that if you study the RabbitMQ's API (which is an AMQP implementation broker), you should note that the sintax defined by the API's methods are similar with low level statements defined by the protocol.
 
-As follows is an example of a java code which sends messages to a queue:
+Following is an example of a Java code sending messages to a queue:
 
 ```java
 public class Send {
@@ -214,7 +213,7 @@ public class Send {
 }
 ```
 
-And now an example of a message consumer which listens for messages sent to the "hallo" queue:
+And now an example of a message consumer which listens for messages delivered to the "hallo" queue:
 
 ```java
 public class Recv {
@@ -287,8 +286,8 @@ public class Recv {
 }
 ```
 
-This was another edition of the logbook of devadventures.
+This was another edition of the log-book of devadventures.
 
 The main idea here wasn't to get into details of Publisher or Consumer implementation. The code presented before was just added as an example of AMQP broker communication.
 
-On next post I will put a bit about what I have studied of RabbitMQ.
+In a next post I will dive deeper into RabbitMQ usage examples.
