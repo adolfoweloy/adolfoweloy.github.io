@@ -28,7 +28,7 @@ Before moving on, I want to list limits on sizes and throughput:
 ```
 - 1 RCU = 1 strongly consistent read per second, for items up to 4KB;
 - 1 RCU = 2 eventual consistent reads per second, for items up to 4KB;
-- 1 WCU = 1 write/s for items up to 1KB (regardless if it is strongly or consistent write);
+- 1 WCU = 1 write/s for items up to 1KB (regardless if it is strongly or eventual consistent);
 - Transactional requests require double the capacity (the size in KB remains the same);
 - Maximum item size within a table: 400KB;
 - 40,000 RCUs/WCUs per table;
@@ -46,16 +46,16 @@ It's important to mention, that the limits presented here are imposed by the cos
 
 I don't want to dive into the details on how AWS charges (there's a [lot of things to be considered](https://aws.amazon.com/dynamodb/pricing/)), but the main things to consider are throughput and amount of data stored. I am going to focus just on throughput, or in other words, capacity for reads and writes.
 
-Initially, DynamoDB provided just __provisioned mode__, in which the developer defines the amount of RCUs and WCUs available per table when creating a new table (the capacity can also be changed later too). It's the perfect option when you know how much reads and writes your application requires and when the throughput is stable enough to assume a reasonable threshold for capacity in general (as with provisioned mode it's possible to rely on auto-scaling, if the application ramps smothly whereas DynamoDB can adapt to an application's workload).
+Initially, DynamoDB offered only __provisioned mode__, where you specify the number of RCUs and WCUs for each table at creation (and can adjust them later). This mode works well when your application's read and write requirements are predictable and throughput remains relatively stable. With provisioned mode, you can also enable auto-scaling to help DynamoDB automatically adjust capacity as your application's workload changes gradually.
 
-As for some applications, it's impossible to predict the workloads (i.e with peaks happening irregularly), AWS came up with __on demand capacity mode__, in which you can be charged only for what you use (however it can be more expensive if you application has a well known and stable enough traffic).
+For applications where workloads are unpredictable and can experience irregular peaks, AWS introduced __on-demand capacity mode__. With this mode, you are charged only for the read and write requests you actually use. However, if your application's traffic is stable and predictable, on-demand mode may be more expensive compared to provisioned capacity.
 
 A table can be changed to use one mode or the other (an operation that can take a few minutes) but just once a day. As per AWS docs:
 > You can switch between read/write capacity modes once every 24 hours...
 
 ### Scaling with on-demand capacity
 
-DynamoDB automatically allocates more capacity when the workload for an application increases demanding more capacity than what was available as per the last peak. However, DynamoDB can accomodate up to double the previous peak within 30 minutes whilst allowing for sustained traffic without throttlings. If the traffic of an application more than doubles within a row of 30 minutes, the application can experience throttling.
+DynamoDB automatically allocates more capacity when the workload for an application increases, demanding more capacity than what was available as per the last peak. However, DynamoDB can accommodate up to double the previous peak within 30 minutes whilst allowing for sustained traffic without throttlings. If the traffic of an application more than doubles within a row of 30 minutes, the application can experience throttling.
 
 ## Autoscaling
 
