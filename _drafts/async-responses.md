@@ -33,18 +33,29 @@ To understand the context around how async processing came up in Servlets, I tra
 
 ![Thread starvation]({{ "/assets/async/thread-starvation.png" | absolute_url }})
 
-All of that cool stuff at the time to create more interactive web applications such as AJAX, created a new set of challenges for the backend. One single client could open multiple connections to the server, and multiple requests could happen concurrently, increasing the load on the server. Just imagine how much the load would increase on a page that was supporting 1000 concurrent requests and suddenly with more interactivity, 10 additional requests would be made via AJAX for that same page. That would go beyond what Tomcat could handle at that time leading to thread starvation and unsatisfied customers. 
+All of that cool stuff available at that time used to create more interactive web applications such as AJAX, came also with a new set of challenges for the backend. One single client could open multiple connections to the server, and multiple requests could happen concurrently, increasing the load on the server. Just imagine how much the load would increase on a page that was supporting 1000 concurrent requests and suddenly with more interactivity, 10 additional requests would be made via AJAX for that same page. That would go beyond what Tomcat could handle at that time leading to thread starvation and unsatisfied customers. 
 
 A better and standardised way of handling slow processing and long-lived connections was clearly needed. To start overcoming these challenges, one of the proposed changes for the Servlet 3.0 was suggested as "Async and Comet support" (see [JSR-315](https://jcp.org/en/jsr/detail?id=315)). The main focus of this proposal was on supporting asynchronous request processing which by itself should help with the thread starvation problem as well as enabling support for Comet style applications.
 
 Non-blocking I/O support was also considered and further improved with Servlet 3.1 allowing for non-blocking reads and writes of request and response respectively. However, that wouldn't yet be the full non-blocking solution that we know today with e.g. Spring WebFlux running with Netty, or what is provided by other stacks such as NodeJs. In case you want to know more history and see alternatives proposed by the author of Jetty, I left some references at the end of this post that you may like.
 
-## Enough with history, time to warm-up
+### Abstractions
+
+When I learnt about the Servlet's async support a long time ago, I didn't actually use it straight away. When I actually had to use the Servlet Async support, I was actually using an abstraction on top of Servlets provided by Spring Web MVC (to keep it shorter I will call it only Spring Web).
+
+One of the questions I had at that time was: if the response is left open and it is processed by another thread other than the worker, how does Tomcat know how to send the request to the right connection (i.e. to the right client)? I know that it is not reasonable to dive deep into internals on every abstraction that I use in a daily-basis. Doing so would make me the most unproductive developer, so as most people do, I accepted that Tomcat just works as expected and moved on. However, the curiosity was still there.
+
+Alright, so now that Spring is staple framework for Java projects, is it still worth understanding the nitty-gritty details of Servlets and Tomcat? I think so. Regardless of using Spring Web or directly using Servlets (although I expect most projects to be using some abstraction on top of Servlets), the principles remain the same and a solid understanding about it helps clearing out common misunderstandings about asynchronous vs non-blocking I/O support.
+
+<div style="border: 1px solid #b3afd3ff; padding: 0.5em; background-color: #edebfaff; margin-bottom: 0.5em">
+Spring Web provides <code>DeferredResult</code>, <code>Callable</code> and <code>WebAsyncTask</code> as controller return types for async support. When returning these types, Spring Web uses Servlet's 3.0 async support in order for the response to be returned from a separate thread (it works a bit different from the example in this page since it relies on dispatching mechanisms). It also allows for <a href="https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-ann-async.html#mvc-ann-async-reactive-types">returning reactive types</a>, although they are all adapted to an equivalent async result type (e.g. a <code>DeferredResult</code> for single value results). 
+</div>
+
+## Enough with history, time to see some code
 
 To navigate this exploration, I present it all in a top-to-bottom style, following the diagram shown below. Here I start explaining what `HelloServlet` is doing, then start diving into Tomcat's internals down to the operational system calls via APIs and syscalls. In my case, my exploration started with the Servlet while looking at `strace` logs first.
 
-![Layers]({{ "/assets/async/layers.png" | absolute_url }})
-
+![Layers]({{ "/assets/async/layers-request.png" | absolute_url }})
 
 ## HelloServlet
 
@@ -110,22 +121,7 @@ private record BackgroundTask(AsyncContext asyncContext) implements Runnable {
 }
 ```
 
-### The actors behind a request
-
-Before start diving in code or logs, it is useful to play with `/hello` endpoint first and get to know the actors that collaborate in processing a request. A very simple way to do that, is by using a tool like [VisualVM](https://visualvm.github.io/) or [jconsole](https://openjdk.org/tools/svc/jconsole/). Using such tools there is still no need to look into Tomcat's source code. As a matter of fact, it actually makes the journey easier.
-
-The following image, captured from VisualVM while sending a request `/hello` endpoint, shows the threads that are important for the purposes of this post. 
-
-![Tomcat threads]({{ "/assets/async/selected-threads.png" | absolute_url }})
-
-Straight to the point, the actors are Acceptor, Poller, Workers and Custom Threads. But the following list provides more details about what they are and what they do.
-
-- __Acceptor__: accepts new connections from clients and hand the request over to the poller by adding a `PollerEvent` to the `Poller`'s internal queue.
-- __Poller__: the poller blocks for one second waiting for new events on the queue, or is "woken-up" in between the next poll iteration. Whenever there is an event to process, the poller offloads the processing to a worker thread, also known from Tomcat's Javadocs and source code as _container thread_. I will keep calling it worker thread.
-- http-nio-8080-exec-N: this is actually an instance of Tomcat's __worker__ thread. Tomcat starts with already a pool of ten threads ready to process incoming requests. By default, it can create a maximum of 200 requests.This information can be obtained from Tomcat's documentation, but can also be retrieved from JMX Tomcat's ThreadPool attributes (VisualVM doesn't come with the MBeans tab out-of-the-box, so if you want to see this for yourself, you have to install MBean plugin for VisualVM).
-- custom-thread: this is the thread I am creating from within `HelloServlet#service` method. I will call it just, well, __custom thread__.
-
-#### Running the code
+### Running the example
 
 If you want to run the code, in order to have a smooth experience I recommend you install SdkMan in case you still don't have it. Most of my Java projects come with a `.sdkmanrc` with the Java version being used for the project and in order to use the right version from the terminal, all that is needed is to run `sdk env` (IntelliJ recognises it straight away picking-up the right JVM for the project -- of course it expects you to have the JVM installed).
 
@@ -142,31 +138,38 @@ I am also using `wrk` as a benchmarking tool in order to compare asynchronous vs
 wrk --timeout 10s --latency -t20 -c10 -d10s http://localhost:8080/hello
 ```
 
-## Tomcat
 
-When I learnt about the Servlet's async support a long time ago, I didn't actually use it straight away. When I actually had to use the Servlet Async support, I was actually writing my service using Spring Web MVC (to keep it shorter I will call it only Spring Web).
+## Tomcat internals
 
-One of the questions I had at that time was: if the response is left open and it is processed by another thread other than the worker, how does Tomcat know how to send the request to the right connection (i.e. to the right client)? I know that it is not reasonable to dive deep into internals on every abstraction that I use in a daily-basis. Doing so would make me the most unproductive developer, so as most people do, I accepted that Tomcat just works as expected and moved on. However, the curiosity was still there.
+First things first, in this blog post I examine two separate aspects of Tomcat: the low-level networking level and HTTP request pipeline. The former manages socket creation, polling and event dispatching while the latter actually process the request by parsing it, applying filters, invoking the Servlet's `service` method and process the response.
 
-Alright, so now that Spring is staple framework for Java projects, is it still worth understanding the nitty-gritty details of Servlets and Tomcat? I think so. Regardless of using Spring Web or directly using Servlets (although I expect most projects to be using some abstraction on top of Servlets), the principles remain the same and a solid understanding about it helps clearing out the misunderstandings about asynchronous vs non-blocking I/O support.
+Before diving in code or logs, lets examine the networking level starting with the actors that collaborate to accept connections and handle the request.
 
-<div style="border: 1px solid #b3afd3ff; padding: 0.5em; background-color: #edebfaff; margin-bottom: 0.5em">
-Spring Web provides <code>DeferredResult</code>, <code>Callable</code> and <code>WebAsyncTask</code> as controller return types for async support. When returning these types, Spring Web uses Servlet's 3.0 async support in order for the response to be returned from a separate thread (it works a bit different from the example in this page since it relies on dispatching mechanisms). It also allows for <a href="https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-ann-async.html#mvc-ann-async-reactive-types">returning reactive types</a>, although they are all adapted to an equivalent async result type (e.g. a <code>DeferredResult</code> for single value results). 
-</div>
+### The actors behind a request
 
-### Context
+I think the easiest way to actually see the actors at play, is by actually sending requests to `/hello` endpoint and monitoring Tomtcat's threads by using a tool like [VisualVM](https://visualvm.github.io/) or [jconsole](https://openjdk.org/tools/svc/jconsole/). 
 
-When exploring Tomcat's internals, I had to separate the concerns in order to explore what is relevant for the moment.
+The following image, captured from VisualVM while sending a request `/hello` endpoint, shows the threads that are important for the purposes of this post. 
 
-1. First there is the networking level of accepting a connection and properly distributing the work among threads and this is what I explore more extensively in this blog post.
-2. Then there is the HTTP request pipeline which is where Tomcat actually make use of the `AsyncContext` and where it handles the async state machine in order to keep the response open and determine when to return. 
+![Tomcat threads]({{ "/assets/async/selected-threads.png" | absolute_url }})
 
-### Now the internals
+Straight to the point, the actors are the Acceptor, the Poller, some Workers and the Custom Threads. Here is the breakdown of each one:
 
-Focusing on the first point, i.e. the networking level, the diagram __below__ presents the classes that collaborate to handle a request, which in this case means: to accept connections, handle the request to the worker thread pool and start the HTTP request pipeline.
+- __Acceptor__: accepts new connections from clients and hand the request over to the poller by adding a `PollerEvent` to the `Poller`'s internal queue.
+- __Poller__: the poller blocks for one second waiting for new events on the queue, or is "woken-up" in between the next poll iteration. Whenever there is an event to process, the poller offloads the processing to a worker thread, also known from Tomcat's Javadocs and source code as _container thread_. I will keep calling it worker thread.
+- http-nio-8080-exec-N: this is actually an instance of Tomcat's __worker__ thread. Tomcat starts with already a pool of ten threads ready to process incoming requests. By default, it can create a maximum of 200 requests.This information can be obtained from Tomcat's documentation, but can also be retrieved from JMX Tomcat's ThreadPool attributes (VisualVM doesn't come with the MBeans tab out-of-the-box, so if you want to see this for yourself, you have to install MBean plugin for VisualVM).
+- custom-thread: this is the thread I am creating from within `HelloServlet#service` method. I will call it just, well, __custom thread__.
+
+
+### The networking level classes
+
+Now to put things in perspective, the actors previously described are all instances of some of the classes depicted in the class diagram __below__. I consider `NioEndpoint` the main class in this diagram because `Poller` and `Acceptor` are all inner classes and they all collaborate to handle the low-level networking work, as well as coordinates the communication via Worker threads. As an attempt to shortly describe what is in this picture, these classes collaborate to accept connections, handle the request to the workers and start the HTTP request pipeline via `SocketProcessor`.
 
 ![Tomcat main networking classes]({{ "/assets/async/tomcat-main-classes.png" | absolute_url }})
 
+
+
+## TODO: use this to connect the dots
 With the class diagram above, now we have a map to guide us through what comes next: the request flow.
 
 1. First off the web app loader will start important things for the container such as the endpoint that according to Tomcat's Javadocs, _provides low-level network I/O_ (see `AbstractProtocol#endpoint`).
