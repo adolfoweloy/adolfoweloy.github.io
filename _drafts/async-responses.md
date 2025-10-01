@@ -168,165 +168,255 @@ Now to put things in perspective, the actors previously described are all instan
 ![Tomcat main networking classes]({{ "/assets/async/tomcat-main-classes.png" | absolute_url }})
 
 
+## Linux System calls
 
-## TODO: use this to connect the dots
-With the class diagram above, now we have a map to guide us through what comes next: the request flow.
-
-1. First off the web app loader will start important things for the container such as the endpoint that according to Tomcat's Javadocs, _provides low-level network I/O_ (see `AbstractProtocol#endpoint`).
-2. Then when the endpoint's start method is called it creates and starts both the `Poller` and the `Acceptor` in the same order. 
-3. When a request comes in, the `Acceptor` calls the endpoint's method that starts accepting new connections. Once a connection is accepted, it calls `endpoint#setSocketOptions` for the accepted socket which will among others, set the following properties:
-    - sets the connection to non-blocking
-    - sets the read timeout
-    - sets the write timeout
-    - sets the keep alive left attribute
-    - registers the socket (wrapped in a `SocketWrapper`) against the `Poller`.
-4. When the `SocketWrapper` is registered in the `Poller`'s queue, which will check whether that is the first event, in which case the poller will be woken-up via selector starting the request processing. Otherwise, it will just enqueue a new event in case of multiple requests coming in a very short interval.
-5. Whenever the `Poller` has an event in the queue to be processed, it will call its method `processKey` (key here is what is returned from a selector -- see more about Java Nio to understand it) which in turn will call the endpoint's `processSocket` method.
-6. `processSocket` creates a `SocketProcessor` if one is not present, and submit that to Tomcat's worker thread pool executor.
-7. The `SocketProcessor` is also the entry-point for the HTTP request pipeline to start.
-
-## System calls
-
-When I first started exploring how Tomcat handles requests under the hood, I wanted to see how the custom thread was actually sending the response back to the right client. Although the log can be huge, knowing the calls to look for can help one understanding what is going on without having to actually look at Tomcat's source code. 
-
-But how to get system calls' logs? Enters [strace](https://man7.org/linux/man-pages/man1/strace.1.html).
-
-The description from strace's man page is very clear about what it does:
+When I first started exploring how Tomcat handles requests under the hood, I wanted to see how the custom thread was actually sending the response back to the right client. And I started from examinig Linux system calls using [strace](https://man7.org/linux/man-pages/man1/strace.1.html). Although the logs can be sometimes huge, knowing the basic system calls and what to look for in the logs, can help a lot in understanding what is going with a software component even if you don't have the source code. In my case, that actually guided me on what to expect from Tomcat's source code. In case you don't know what `strace` is, here is a short description from `strace`'s man page:
 
 > It intercepts and records the system calls made by a process and the signals a process receives
 
-But reading the second paragraph of the description section is even more exciting and inspiring:
+Okay that can be a bit abstract. The second paragraph of the description section is better and even exciting and inspiring:
 
 > strace is a useful diagnostic, instructional, and debugging tool. System administrators, diagnosticians, and troubleshooters will find it invaluable for solving problems with programs for which source code is not readily available, as recompilation is not required for tracing. Students, hackers, and the overly-curious will discover that a great deal can be learned about a system and its system calls by tracing even ordinary programs.
 
-Before jumping into the logs, it is worth mentioning that it logs both the processes IDs (PID) as well as thread IDs (TID).
+I can relate with this beautiful description! Especially when it says "_a great deal can be learned about a system and its system calls by tracing even ordinary programs_". This is what this blog post is about. I was debugging an ordinary Servlet.
 
-### Starting the service with strace
+### A prime on the system calls
 
-The two options I know about on how to start tracing the system calls logs are:
-- attach strace via PID
-- start the application with strace
+The most interesting system calls that I show in the logs collected after sending a request to `/hello` are:
+- epoll_create1
+- epoll_ctl
+- epol_wait
+- fcntl
 
-In my example I will show what I actually used which was the second option:
+The other system calls are self explanatory so I won't cover them here.
+
+#### The epoll API
+
+The calls `epoll_create1`, `epoll_ctl` and `epoll_wait` are all part of epoll API. According to [epoll's man page](https://linux.die.net/man/7/epoll), epoll is an I/O event notification facility. In a maybe over simplified idea, the epoll can be use to watch file descriptors (e.g. pipes, sockets and devices are represented as file descriptors in Linux and you can think of them as handlers). 
+
+In other words, you give epoll a list of file descriptors to monitor for changes (e.g. the socket is ready for reading or writing) and wait for events to happen. One more thing: `epoll_wait` __blocks__ while waiting for a notification, so here I was able to see that the Servlet's async support is intrinsicaly blocking. However, of course Tomcat doesn't just sit there forever waiting for notifications. There is actually a loop where it _epolls_ for one second. On the next iteration it may have happened that an event became ready to be processed and that's when the following system call happens (notice that the last argument is 0 -- timeout is set to 0 and it doesn't wait to get the event notification):
+
+```
+epoll_wait(9, [{events=EPOLLIN, data={u32=11, u64=xx}}], 1024, 0) = 1 
+```
+
+The following snippet is the logic that runs in a loop (a while true) within the Tomcat's `Poller.run()` method. Notice that the logic in the `if` block (when the condition is true) is what actually maps to the `epoll_wait` with a timeout of zero seconds.
+
+```java
+if (wakeupCounter.getAndSet(-1) > 0) {
+    // If we are here, means we have other stuff to do
+    // Do a non-blocking select
+    keyCount = selector.selectNow();
+} else {
+    keyCount = selector.select(selectorTimeout);
+}
+```
+
+I won't expand on the logic around the `wakeupCounter`, but the summary is that it will be used as a mechanism to wake up the poller to do a non blocking select (`selectNow`). This counter is incremented every time there is a new poller event initiated by the Acceptor when a new request comes in and that can lead to a wakeup operation on the selector which in turn will wake-up the selector that is waiting with a one second time out:
+
+```java
+// class Poller
+private void addEvent(PollerEvent event) {
+    events.offer(event);
+    if (wakeupCounter.incrementAndGet() == 0) {
+        selector.wakeup();
+    }
+}
+```
+
+For more about the epoll system call, I think the blog post "[The method to epoll's madness](https://copyconstruct.medium.com/the-method-to-epolls-madness-d9d2d6378642)" is awesome. I also recommend this nice overview about it from Julia Evans blog, "[Async IO on Linux: select, poll, and epoll](https://jvns.ca/blog/2017/06/03/async-io-on-linux--select--poll--and-epoll/)".
+
+<div style="border: 1px solid #b3afd3ff; padding: 0.5em; background-color: #edebfaff; margin-bottom: 0.5em">
+The selector object here is part of Java Nio API which is the non-blocking I/O support that Java provides.
+</div>
+
+#### fcntl
+
+I will be short on this one because I honestly didn't explore it much, but the bottom-line is that it performs operations on open file descriptors. The reason I am mentioning it here is because there is an interesting call in the strace logs:
+
+```
+fcntl(11, F_SETFL, O_RDWR|O_NONBLOCK) = 0
+```
+
+This command is simply setting the socket's file descriptor property `O_NONBLOCK`, which means that this file descriptor is non-blocking I/O. Alright so we have non-blocking I/O support, right? Not too fast! That is a property set for the connection only, which means that each time one tries to read from the socket and there is nothing to read, instead of blocking it returns a `EAGAIN` flag and the program continues until next attempt to read.
+
+This system call is made exactly when a new connection is accepted by the `Acceptor` and some options are set before adding it to the current `connections` map and being wrapped by `SocketWrapper` class (mentioned in the class diagram). This operation is achieved by the following line of `NioEndpoint.setSocketOptions` method:
+
+```java
+socket.configureBlocking(false);
+```
+
+I want to emphasize again that the non-blocking mechanism here is used on the connection only. If you have a logic that blocks, the custom thread will be blocked, waiting for whatever it has to wait unless you use a non-blocking library to do the work. As an example, one could use `WebClient` from Spring WebFlux to send a request to another service which would be performed in a non-blocking way.
+
+## Connecting the dots
+
+Now that I have provided context about the low-level networking Tomcat's classes and the relevant system calls, it is time to dissect a request. The first thing to do then is to start the service and send a request to `/hello`. While debugging Tomcat, I started the service with the command `strace` but the tracing can be started after the service is up and running. To do that, just provide the service's process ID (PID) with `-p` `strace` option.
+
+Starting the service with `strace`:
 
 ```bash
 strace -ttt -f -o trace.log -e trace=network,desc -s 2000 \
 java -jar target/asyncservlet-1.0-SNAPSHOT-shaded.jar
 ```
 
-Because of the way I started, I quickly sent a request to `/hello` in order to generate the logs and soon after I got the response I interrupted the command above (Ctrl + C). The logs were huge: 24 MB for a couple of seconds. But don't worry, I summarised what was relevant for my purposes and here is what I got (the timestamps were truncated in hope to get each line shorter):
+Then, all I have to do was to send a request to `/hello`, wait for the response and stop the process so that the log don't keep growing indefinitely (it grows fast). Here is a summary of the tracing log with what is relevant for this debug:
 
 ```
 144471 5438.553 epoll_create1(EPOLL_CLOEXEC) = 9 
 144523 5438.555 accept(8,  <unfinished ...>
+...
 144523 5440.167 <... accept resumed>{sa_family=AF_INET6, sin6_port=htons(59396), ...), sin6_scope_id=0}, [28]) = 11
 144523 5440.175 fcntl(11, F_GETFL) = 0x2 (flags O_RDWR)
 144523 5440.175 fcntl(11, F_SETFL, O_RDWR|O_NONBLOCK) = 0
 144523 5440.177 accept(8, {sa_family=AF_INET6, sin6_port=htons(59400), ...), sin6_scope_id=0}, [28]) = 12
+...
 144522 5440.178 epoll_ctl(9, EPOLL_CTL_ADD, 11, {events=EPOLLIN, data={u32=11, u64=126985003073547}}) = 0
 144522 5440.178 epoll_wait(9, [{events=EPOLLIN, data={u32=11, u64=126985003073547}}], 1024, 0) = 1 
 144522 5440.178 epoll_ctl(9, EPOLL_CTL_DEL, 11, 0x737e05ffe514) = 0
+...
 144512 5440.201 read(11, "GET /hello HTTP/1.1\r\nHost: localhost:8080\r\nConnection: keep-alive...", 8192) = 695
-144512 5440.218 write(1, "Processing in thread: http-nio-8080-exec-1\n", 43) = 43
+144512 5440.218 write(1, "Handling the request in thread: http-nio-8080-exec-1\n", 43) = 43
+...
 144513 5440.221 write(1, "Processing async in thread: http-nio-8080-exec-2\n", 49) = 49
 144513 5444.231 write(11, "HTTP/1.1 200 ...", 136) = 136
+...
 144522 5444.232 epoll_ctl(9, EPOLL_CTL_ADD, 11, {events=EPOLLIN, data={u32=11, u64=11}}) = 0
 ```
 
-- The first column shows the PID/TIDs
-- The second column shows the truncated timestamp
-- Then comes the commands
+### Accepting the connection
 
-### A prime on the system calls
+All that happens here are calls made at the low-level networking I/O, but some of them are also the result of what is started from the HTTP request pipeline.
+The first line is self explanatory showing the (PID or TID -- Thread ID), a truncated timestamp and the system call which in this case is just creating an epoll where the system can add file descriptors to monitor for events.
 
-Before I explain what is actually happening with all these system calls, I think it is worth having an overview of each command used here.
-
-#### The epoll API
-
-The calls `epoll_create1`, `epoll_ctl` and `epoll_wait` are all part of epoll API. According to [epoll's man page](https://linux.die.net/man/7/epoll), epoll is an I/O event notification facility. Depending on the OS being used, Tomcat will use whatever is available. On MacOS the same is achieved with kqueue. In a maybe over simplified idea, the epoll can be use to watch file descriptors (e.g. pipes, sockets and devices are represented as file descriptors in Linux and you can think of them as handlers).
-
-In other words, you give epoll a list of file descriptors to monitor for changes (e.g. the socket is ready for reading or writing) and wait for events to happen. One more thing: `epoll_wait` blocks while waiting for a notification, so here I was able to see that the Servlet's async support is intrinsecaly blocking. However, of course Tomcat don't just sit there forever waiting for notifications. There is actually a loop where it epolls for one second. On the next iteration it may have happened that an event is ready to be processed and that's when the following system call happens (notice that the last argument is 0 -- timeout is set to 0 and it doesn't wait to get the event notification):
+The second line is more interesting and shows when thread `144523` actually blocks accepting new connections, which is resumed when a request to `/hello` comes in leading to the `accept resumed`. 
 
 ```
-epoll_wait(9, [{events=EPOLLIN, data={u32=11, u64=xx}}], 1024, 0) = 1 
+144523 5440.167 <... accept resumed>{<truncated>), sin6_scope_id=0}, [28]) = 11
 ```
 
-For more about the epoll, I think the blog post "[The method to epoll's madness](https://copyconstruct.medium.com/the-method-to-epolls-madness-d9d2d6378642)" is awesome. I also recommend this nice overview about it from Julia Evans blog, "[Async IO on Linux: select, poll, and epoll](https://jvns.ca/blog/2017/06/03/async-io-on-linux--select--poll--and-epoll/)"
+We can assume now that `144523` is the `Acceptor`. Notice that once the connection is accepted it returns a number and that is used to reference the socket's file descriptor (in this case, `11`). From Tomcat's perspective, that is done by `Acceptor.run()` in the following snippet:
 
-#### fcntl
-
-I will be short on this one because I honestly didn't explore it much, but the bottomline is that it performs operations on open file descriptors. The reason I am mentioning it here is because there is an interesting call in the strace logs:
-
-```
-fcntl(11, F_SETFL, O_RDWR|O_NONBLOCK) = 0
-```
-
-This command is simply setting the socket's file descriptor property O_NONBLOCK, which means that this file descriptor is non-blocking I/O. Alright so we have non-blocking I/O support, right? Not too fast! That is a property set for the connection only, which means that each time one tries to read from the socket and there is nothing to read, instead of blocking it returns a EAGAIN and the program continues until next attempt to read.
-
-
-## Connecting the dots
-
-1. Accept is initiated by thread 144523 in order to accept new connections.
-2. The accept call is resumed, and a new socket file descriptor (fd 11) is created for the incoming connection.
-3. The socket is set to non-blocking mode using fcntl.
-4. Poller thread 144522 adds the new socket (fd 11) to the epoll instance to monitor it for incoming data.
-5. The HTTP request is read from the socket (fd 11) by the worker thread.
-6. Removes the socket (fd 11) from the epoll instance as it is being processed.
-7. The request is then processed by thread 144513, which starts processing the request asynchronously in another thread.
-8. The response is written back to the socket (fd 11) by the worker thread number 144513.
-9. The epoll instance is updated again to monitor the socket (fd 11) for incoming data.
-
-
-The conclusion of this flow is that the request is accepted and processed asynchronously, with the use of multiple threads and non-blocking I/O to handle incoming connections and data efficiently. And the interesting part to me is that the response is written back to the same socket file descriptor (fd 11) that was created when the connection was accepted. Why this is interesting to me? Because the Servlet API abstracts these details away giving the impression that request is partially processed immediately with the Servlet not returning anything from the async processing.
-
-
-
-
-
-really good stating the problem solved by the async processing in Servlets: https://web.archive.org/web/20190315183213/http://www.softwareengineeringsolutions.com/blogs/2010/08/13/asynchronous-servlets-in-servlet-spec-3-0/
-
-> First, was the issue of thread starvation. Each thread consumes server side resources – both memory and CPU resources. As a result, the number of threads within the pool must be constrained to some finite number. Furthermore, if the processing that the thread must perform for a client requires some blocking operation (say waiting on some slow external resource such as a database or web service), that thread is effectively unavailable to the server. In other words, it is possible that all threads in the pool are soon blocked and incoming requests can no longer be effectively handled. This is not just a theoretical problem. With the prevalence of fine grained Ajax-requests, and the adoption of SOA, the load on web servers is on an upward trend.
-
-
-
-## Async vs non-blocking
-
-As I previously mentioned, these terms are often used interchangeably, but they are not the same thing. In hope of clarifying the distinction, here is a simple breakdown of the two concepts:
-
-* __Asynchronous__: This is about transferring the execution of a task to another thread or process (or even a service). The caller thread in this case, can't wait for the task to complete and thinking about a REST API, the caller transfer the execution of the request and returns from the call. The response continues to be processed by another thread, and in the case of Servlets, the response is written back to the same connection that was used to make the request.
-* __Non-blocking__: This is about not blocking the caller thread completely freeing it to do other things while indirectly waiting for a task to complete. When the I/O operation is done, the thread can be notified (usually via a callback or an event) and can then handle the result of the I/O operation.
-
-## An Async request example
-
-Using strace in order to trace system calls, I was able to see what happens when an async request is made to a REST endpoint. The example below shows a simple Servlet application running with embedded Tomcat.
-
-
-```
-strace -ttt -f -o trace.log -e \
-trace=network,desc -s 2000 \
-java -jar target/asyncservlet-1.0-SNAPSHOT-shaded.jar
+```java
+try {
+    // Accept the next incoming connection from the server
+    // socket
+    socket = endpoint.serverSocketAccept();
+} catch (Exception e) {
+    // We didn't get a socket
+    // commented for brevity
+}
 ```
 
+Remember the `fcntl` system call? Here is where the acceptor is asking `NioEndpoint` to set some properties OR-ing with `O_NONBLOCK` as explained previously. As one may notice, there is another connection accepted with the ID 12, which I am not sure what is this about (apparently Chrome can open extra connections before sending requests, but I am not sure about it).
+
+### Polling for events
+
+Another thread (TID `144522`) starts registering interest on input events (`EPOLLIN`) the accepted socket number `11`. 
+
+```
+144522 5440.178 epoll_ctl(9, EPOLL_CTL_ADD, 11, \
+   {events=EPOLLIN, data={u32=11, u64=126985003073547}}) = 0
+```
+
+This call was made when the connection was accepted and the Acceptor invoked setSocketOptions for the new SocketChannel which is an indirect call to the Poller.register method shown below.
+
+```java
+public void register(final NioSocketWrapper socketWrapper) {
+    // this is what OP_REGISTER turns into.
+    socketWrapper.interestOps(SelectionKey.OP_READ);
+    PollerEvent pollerEvent = createPollerEvent(socketWrapper, OP_REGISTER);
+    addEvent(pollerEvent);
+}
+```
+
+Then, as the next step it starts waiting for events (here I am loggin only the `epoll_wait` call that happened with timeout 0 which means that the Java `selector` did not have the chance to be woken up by `Acceptor` registering new events to the `Poller`).
+
+```
+144522 5440.178 epoll_wait(9, [{events=EPOLLIN, \
+   data={u32=11, u64=126985003073547}}], 1024, 0) = 1 
+```
+
+This call happens within the `Poller`'s loop that checks for wakeup signal (same code previously shown):
+
+```java
+if (wakeupCounter.getAndSet(-1) > 0) {
+    // If we are here, means we have other stuff to do
+    // Do a non-blocking select
+    keyCount = selector.selectNow();
+} else {
+    keyCount = selector.select(selectorTimeout);
+}
+```
+
+Later, when the Poller is ready to dispatch a request processing, it removes the interest for input events on the socket `11` as follows:
+```
+144522 5440.178 epoll_ctl(9, EPOLL_CTL_DEL, 11, 0x737e05ffe514) = 0
+```
+
+### The request processing starts
+
+Then the HTTP request pipeline starts and the worker thread starts reading from the request which is visible in the following system call (notice the first column changed again to TID `144512`):
+
+```
+144512 5440.201 read(11, "GET /hello HTTP/1.1\r\nHost: localhost:8080\r\nConnection: keep-alive...", 8192) = 695
+144512 5440.218 write(1, "Handling the request in thread: http-nio-8080-exec-1\n", 43) = 43
+```
+
+The write system call here is simply writing to the console, which I have done with a `System.out.println` from within the Servlet's `service` method.
+
+### Finally, the response
+
+Yes, it was a long journey. Now, finally the custom thread (notice the new TID `144513`) writes the response to connection initially accepted with ID `11`. Here is the proof that the Servlet Async mechanism really writes to the right connection. 
+
+One may judge me now: "Hey, come on! Isn't enough to just see that the browser got the response to believe it?". Okay I get it, but think of this debug as a math proof. A famous logicist once spent years to prove that one plus one equals two, so why can't I prove that the Servlet works by looking at the Linux system call level?
+
+```
+144513 5440.221 write(1, "Processing async in thread: http-nio-8080-exec-2\n", 49) = 49
+144513 5444.231 write(11, "HTTP/1.1 200 ...", 136) = 136
+```
+
+By the way, if I remember well, the logicist I was talking about was Bertrand Russel and the monumental work was [Principia Mathematica](https://en.wikipedia.org/wiki/Principia_Mathematica) which was actually the outcome of Bertrand's and Alfred North Whitehead's work. 
+
+
+## Asynchronous support at the HTTP request pipeline level
+
+This is a short section just to describe a bit of why do we have to set the request as asynchronous from within the service method. Again that may seem obvious, but is it? Why can't you just create the thread and start it anyways without actually marking the request as asynchronous? If you try to do this, by just passing the response to the background task so that it writes to the response when it runs, then that will be the outcome:
+
+```
+Exception in thread "custom-thread" java.lang.IllegalStateException: \
+The response obj. has been recycled and is no longer associated w/ this facade
+	at o.a.c.c.ResponseFacade.checkFacade(ResponseFacade.java:427)
+	at o.a.c.c.ResponseFacade.isCommitted(ResponseFacade.java:190)
+	at o.a.c.c.ResponseFacade.setContentType(ResponseFacade.java:150)
+	at com.adolfoeloy.HelloServlet$BackgroundTask.run(HelloServlet.java:36)
+```
+
+Marking the request as async with `request.startAsync()` will bind the `AsyncContext` with the request and that will be used throughout the HTTP request pipeline in order to make sure the response is kept open for the background task to write the response when it is ready to do so. Here is a very simplified view of what happens when the Servlet is being processed:
+
+
+![Request pipeline]({{ "/assets/async/request-pipeline.png" | absolute_url }})
+
+The main point here that I want to illustrate is that when the `HelloServlet` finishes processing it returns potentially before the `BackgroundTask` completes and the request's `AsyncContext` reference will be used by the request pipeline (when returning) to check if the request is async in order to keep the response open and control the async state-machine statuses.
+
+When `BackgroundTask` completes processing the request pipeline will check and update the async state-machine appropriately and will close the resources after finishing.
+
+## Final thoughts
+
+My intention with this blog post starts with my intention to consolidate the things I learned while doing my research on Tomcat's inner workings. I consider this mission acomplished for the purposes I had. However, I also believe that this content may help other curious minds to have a clear picture about what happens when a request is processed by Tomcat and more: that the very common confusion about async vs non-blocking I/O is cleared out by now. If you were patient to read this blog post till this point, thanks for reading it and I hope you have enjoyed as much as I had.
 
 # References
+- [JSR 315: Java Servlet 3.0 Specification](https://jcp.org/en/jsr/detail?id=315)
+- [JSR 315 Servlet 3.0 Specification Part I](https://webtide.com/jsr-315-servlet-3-0-specification-part-i/)
+- [Comet low latency data for the browser](https://infrequently.org/2006/03/comet-low-latency-data-for-the-browser/)
+- [Using Asynchonous Servlets for Web Push Notifications](https://www.oracle.com/webfolder/technetwork/tutorials/obe/java/async-servlet/async-servlets.html)
 - [Discussion about the relationship between Non-blocking I/O support from Servlet 3.1 and the async processing of Servlet 3.0](https://download.oracle.com/javaee-archive/servlet-spec.java.net/users/2012/11/0294.html)
 - [Non-blocking I/O using Servlet 3.1 example by Arun Gupta](https://web.archive.org/web/20131024234453/https://blogs.oracle.com/arungupta/entry/non_blocking_i_o_using)
-- [JSR 315 Servlet 3.0 Specification Part I](https://webtide.com/jsr-315-servlet-3-0-specification-part-i/)
+- [Tenfold increase in server throughput with Servlet 3.0 asynchronous processing](https://web.archive.org/web/20120124181624/https://nurkiewicz.blogspot.com/2011/03/tenfold-increase-in-server-throughput.html)
+- [Spring MVC 3.2 Preview: techniques for real-time updates](https://web.archive.org/web/20130621124909/https://blog.springsource.org/2012/05/08/spring-mvc-3-2-preview-techniques-for-real-time-updates/)
+- [Spring MVC 3.2 Preview: Introducing Servlet 3, Async Support](https://spring.io/blog/2012/05/07/spring-mvc-3-2-preview-introducing-servlet-3-async-support)
+- [Java NIO Selector](https://jenkov.com/tutorials/java-nio/selectors.html)
+- [epoll Linux man page](https://linux.die.net/man/7/epoll)
 
 # Footnotes
 [^1]: https://akka.io/blog/reactive-programming-versus-reactive-systems
 [^2]: https://projectreactor.io/docs/core/release/reference/gettingStarted.html
-
-
-- https://jcp.org/en/jsr/detail?id=315&utm_source=chatgpt.com
-- https://webtide.com/jsr-315-servlet-3-0-specification-part-i/?utm_source=chatgpt.com
-- https://niels.nu/blog/2016/spring-async-rest
-- about comet https://infrequently.org/2006/03/comet-low-latency-data-for-the-browser/
-
-## Resources to explore in order to write this post
-
-- Reactive programming lessons learned by Tomasz Nurkiewicz https://www.youtube.com/watch?v=z0a0N9OgaAA
-- Project showing how async support in Servlets can be done
-- Here is where the author explain the reasoning behind the project on GH: https://web.archive.org/web/20110415080928/http://nurkiewicz.blogspot.com/2011/03/tenfold-increase-in-server-throughput.html
-
-
