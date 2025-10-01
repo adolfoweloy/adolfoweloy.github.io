@@ -15,3 +15,6 @@ livro_casa_do_codigo:
 
 terminal:
   default_lang: en
+
+async_servlets:
+  default_lang: en
